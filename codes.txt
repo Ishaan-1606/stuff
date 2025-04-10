@@ -1,0 +1,943 @@
+MITM
+
+Mallory intercepts and replaces the public keys:
+
+Alice sends → A = g^a mod p
+
+Mallory intercepts, replaces with:
+
+→ M1 = g^m1 mod p
+
+Bob sends → B = g^b mod p
+
+Mallory intercepts, replaces with:
+
+→ M2 = g^m2 mod p
+
+Now keys are:
+
+Alice computes:
+
+K_A = (M2)^a mod p = g^(m2·a) mod p
+
+Bob computes:
+
+K_B = (M1)^b mod p = g^(m1·b) mod p
+
+Mallory computes:
+
+With Alice: K_MA = A^m2 mod p = g^(a·m2) mod p
+
+With Bob: K_MB = B^m1 mod p = g^(b·m1) mod p
+
+------------------------------------------------------------------------------------
+
+DES Simplified
+
+
+
+import socket
+
+
+
+def start_client():
+
+    host = 'localhost'
+
+    port = 12345
+
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    client_socket.connect((host, port))
+
+
+
+    plaintext = input("Enter 8-bit plaintext in hexadecimal (e.g., A5): ")
+
+    key = input("Enter 10-bit key in hexadecimal (e.g., 2A3): ")
+
+
+
+    client_socket.send(plaintext.encode('utf-8'))
+
+    client_socket.send(key.encode('utf-8'))
+
+
+
+    ciphertext = client_socket.recv(1024).decode('utf-8')
+
+    print(f"Ciphertext (hex): {ciphertext}")
+
+
+
+    client_socket.close()
+
+
+
+import socket
+
+
+
+def permute(block, table):
+
+    return [block[i - 1] for i in table]
+
+
+
+def xor(bits1, bits2):
+
+    return [b1 ^ b2 for b1, b2 in zip(bits1, bits2)]
+
+
+
+def substitute(block, sbox):
+
+    row = (block[0] << 1) | block[3]  # Row selection
+
+    col = (block[1] << 1) | block[2]  # Column selection
+
+    return [int(i) for i in format(sbox[row][col], '02b')]
+
+
+
+def encrypt_8bit_DES(plaintext, key):
+
+    IP = [2, 6, 3, 1, 4, 8, 5, 7]      # Initial Permutation
+
+    IP_inv = [4, 1, 3, 5, 7, 2, 8, 6]  # Inverse Initial Permutation
+
+    EP = [4, 1, 2, 3, 2, 3, 4, 1]      # Expansion Permutation
+
+    P4 = [2, 4, 3, 1]                  # P4 Permutation
+
+    P10 = [3, 5, 2, 7, 4, 10, 1, 9, 8, 6]  # P10 Key Permutation
+
+    P8 = [6, 3, 7, 4, 8, 5, 10, 9]     # P8 Key Selection
+
+    
+
+    # Step 2: Define S-Boxes
+
+    S0 = [[1, 0, 3, 2],
+
+          [3, 2, 1, 0],
+
+          [0, 2, 1, 3],
+
+          [3, 1, 3, 2]]
+
+    
+
+    S1 = [[0, 1, 2, 3],
+
+          [2, 0, 1, 3],
+
+          [3, 0, 1, 0],
+
+          [2, 1, 0, 3]]
+
+    
+
+    def left_shift(key, shifts):
+
+        return key[shifts:] + key[:shifts]
+
+    
+
+    key = permute(key, P10)  # Apply P10 permutation
+
+    left, right = key[:5], key[5:]
+
+    left, right = left_shift(left, 1), left_shift(right, 1)
+
+    key1 = permute(left + right, P8)  # First subkey
+
+    left, right = left_shift(left, 2), left_shift(right, 2)
+
+    key2 = permute(left + right, P8)  # Second subkey
+
+    
+
+    def fk(bits, subkey):
+
+        left, right = bits[:4], bits[4:]
+
+        expanded_right = permute(right, EP)  # Expansion Permutation
+
+        xored = xor(expanded_right, subkey)  # XOR with subkey
+
+        left_sbox = substitute(xored[:4], S0)  # S-Box Substitution
+
+        right_sbox = substitute(xored[4:], S1)
+
+        sbox_output = left_sbox + right_sbox
+
+        p4_output = permute(sbox_output, P4)  # P4 Permutation
+
+        return xor(left, p4_output) + right  # XOR with left half
+
+    plaintext = permute(plaintext, IP)
+
+    temp = fk(plaintext, key1)
+
+    swapped = temp[4:] + temp[:4]
+
+    temp = fk(swapped, key2)
+
+    ciphertext = permute(temp, IP_inv)
+
+    return ciphertext
+
+
+
+def start_server():
+
+    host = 'localhost'
+
+    port = 12345
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    server_socket.bind((host, port))
+
+    server_socket.listen(5)
+
+    print("Server is listening...")
+
+    
+
+    while True:
+
+        client_socket, addr = server_socket.accept()
+
+        print(f"Connected to {addr}")
+
+        plaintext = client_socket.recv(1024).decode('utf-8')
+
+        key = client_socket.recv(1024).decode('utf-8')
+
+        plaintext = [int(bit) for bit in bin(int(plaintext, 16))[2:].zfill(8)]
+
+        key = [int(bit) for bit in bin(int(key, 16))[2:].zfill(10)]
+
+        ciphertext = encrypt_8bit_DES(plaintext, key)
+
+        ciphertext_hex = hex(int(''.join(map(str, ciphertext)), 2))[2:].upper()
+
+        client_socket.send(ciphertext_hex.encode('utf-8'))
+
+        client_socket.close()
+
+
+
+------------------------------------------------------------------------------------
+
+DSA 
+
+Key Generation:
+
+x ∈ [1, q−1]
+
+y = g^x mod p
+
+Signature Generation:
+
+k ∈ [1, q−1]
+
+r = (g^k mod p) mod q
+
+s = (k⁻¹ · (H(m) + x·r)) mod q
+
+Signature Verification:
+
+w = s⁻¹ mod q
+
+u1 = (H(m) · w) mod q
+
+u2 = (r · w) mod q
+
+v = ((g^u1 · y^u2) mod p) mod q
+
+Check: v == r
+
+-----------------------------------------------------------------------------------
+
+RSA
+
+Keygen:
+
+n = p·q
+
+φ = (p−1)(q−1)
+
+d = e⁻¹ mod φ
+
+Encryption:
+
+c = m^e mod n
+
+Decryption:
+
+m = c^d mod n
+
+Sign:
+
+s = H(m)^d mod n
+
+Verify:
+
+v = s^e mod n
+
+v == H(m)
+
+----------------------------------------------------------------
+
+Cipher Techniques
+
+
+
+def caesar_encrypt(text, shift):
+
+    result = ''
+
+    for char in text:
+
+        if char.isalpha():
+
+            base = ord('A') if char.isupper() else ord('a')
+
+            result += chr((ord(char) - base + shift) % 26 + base)
+
+        else:
+
+            result += char
+
+    return result
+
+
+
+def caesar_decrypt(text, shift):
+
+    return caesar_encrypt(text, -shift)
+
+
+
+def vigenere_encrypt(text, key):
+
+    result = ''
+
+    key = key.lower()
+
+    key_index = 0
+
+    for char in text:
+
+        if char.isalpha():
+
+            base = ord('A') if char.isupper() else ord('a')
+
+            k = ord(key[key_index % len(key)]) - ord('a')
+
+            result += chr((ord(char) - base + k) % 26 + base)
+
+            key_index += 1
+
+        else:
+
+            result += char
+
+    return result
+
+
+
+def vigenere_decrypt(text, key):
+
+    result = ''
+
+    key = key.lower()
+
+    key_index = 0
+
+    for char in text:
+
+        if char.isalpha():
+
+            base = ord('A') if char.isupper() else ord('a')
+
+            k = ord(key[key_index % len(key)]) - ord('a')
+
+            result += chr((ord(char) - base - k + 26) % 26 + base)
+
+            key_index += 1
+
+        else:
+
+            result += char
+
+    return result
+
+
+
+def vernam_encrypt(text, key):
+
+    if len(key) != len(text):
+
+        raise ValueError("Key must be the same length as text for Vernam Cipher")
+
+    result = ''
+
+    for t, k in zip(text, key):
+
+        result += chr(ord(t) ^ ord(k))
+
+    return result
+
+
+
+def vernam_decrypt(cipher, key):
+
+    return vernam_encrypt(cipher, key)  # XOR again with same key
+
+-----------------------------------------------------------------------------------
+
+HILL Cipher
+
+
+
+import socket
+
+import numpy as np
+
+from sympy import Matrix
+
+
+
+def mod_inverse_matrix(matrix, mod):
+
+    try:
+
+        return np.array(Matrix(matrix).inv_mod(mod)).astype(int)
+
+    except:
+
+        return None
+
+
+
+def process_text(text):
+
+    text = text.lower()
+
+    if len(text) % 2 != 0:
+
+        text += 'x'
+
+    return text
+
+
+
+def encrypt(msg, key):
+
+    msg = process_text(msg)
+
+    msg_vec = np.array([ord(c) - 97 for c in msg]).reshape(-1, 2)
+
+    result = (np.dot(msg_vec, key) % 26).astype(int)
+
+    return ''.join(chr(c + 97) for c in result.flatten())
+
+
+
+def decrypt(msg, key):
+
+    msg = process_text(msg)
+
+    inv_key = mod_inverse_matrix(key, 26)
+
+    if inv_key is None:
+
+        return "ERROR"
+
+    msg_vec = np.array([ord(c) - 97 for c in msg]).reshape(-1, 2)
+
+    result = (np.dot(msg_vec, inv_key) % 26).astype(int)
+
+    return ''.join(chr(c + 97) for c in result.flatten())
+
+
+
+server = socket.socket()
+
+server.bind(('localhost', 12345))
+
+server.listen(1)
+
+print("Server waiting...")
+
+
+
+conn, addr = server.accept()
+
+print("Connected to", addr)
+
+key_data = conn.recv(1024).decode().strip()
+
+key_list = [int(x) for x in key_data.split()]
+
+key_matrix = np.array(key_list).reshape(2, 2)
+
+conn.send(b'OK')
+
+msg_data = conn.recv(1024).decode().strip()
+
+mode, msg = msg_data.split(':')
+
+
+
+if mode == 'ENC':
+
+    result = encrypt(msg, key_matrix)
+
+elif mode == 'DEC':
+
+    result = decrypt(msg, key_matrix)
+
+else:
+
+    result = "INVALID MODE"
+
+
+
+conn.send(result.encode())
+
+conn.close()
+
+server.close()
+
+->client
+
+import socket
+
+
+
+client = socket.socket()
+
+client.connect(('localhost', 12345))
+
+
+
+key = input("Enter 4 numbers (2x2 matrix): ").strip()  # ex: 3 3 2 5
+
+mode = input("ENC/DEC: ").strip().upper()
+
+text = input("Text: ").strip().lower()
+
+
+
+client.send(key.encode())
+
+ack = client.recv(16)
+
+if ack != b'OK':
+
+    print("Key not accepted.")
+
+    client.close()
+
+    exit()
+
+
+
+client.send(f"{mode}:{text}".encode())
+
+result = client.recv(1024).decode()
+
+print("Result:", result)
+
+
+
+client.close()
+
+
+
+-------------------------------------------------------
+
+
+
+MD5
+
+
+
+
+
+import socket
+
+import struct
+
+
+
+def left_rotate(x, c):
+
+    return ((x << c) | (x >> (32 - c))) & 0xFFFFFFFF
+
+
+
+def md5(message):
+
+    r = [7, 12, 17, 22] * 4 + [5, 9, 14, 20] * 4 + [4, 11, 16, 23] * 4 + [6, 10, 15, 21] * 4
+
+    k = [int(2**32 * abs(__import__("math").sin(i + 1))) & 0xFFFFFFFF for i in range(64)]
+
+    
+
+    msg = bytearray(message, 'utf-8')
+
+    orig_len = (8 * len(msg)) & 0xFFFFFFFFFFFFFFFF
+
+    msg.append(0x80)
+
+    while (len(msg) * 8) % 512 != 448:
+
+        msg.append(0)
+
+    msg += struct.pack('<Q', orig_len)
+
+
+
+    a, b, c, d = 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476
+
+    
+
+    for i in range(0, len(msg), 64):
+
+        chunk = msg[i:i + 64]
+
+        w = list(struct.unpack('<16I', chunk))
+
+        aa, bb, cc, dd = a, b, c, d
+
+        for j in range(64):
+
+            f, g = (b & c) | (~b & d), j if j < 16 else ((b & d) | (c & ~d), (5 * j + 1) % 16) if j < 32 else (b ^ c ^ d, (3 * j + 5) % 16) if j < 48 else (c ^ (b | ~d), (7 * j) % 16)
+
+            f = (f + a + k[j] + w[g]) & 0xFFFFFFFF
+
+            a, d, c, b = d, (b + left_rotate(f, r[j])) & 0xFFFFFFFF, b, c
+
+        a, b, c, d = (a + aa) & 0xFFFFFFFF, (b + bb) & 0xFFFFFFFF, (c + cc) & 0xFFFFFFFF, (d + dd) & 0xFFFFFFFF
+
+
+
+    return struct.pack('<4I', a, b, c, d).hex()
+
+
+
+s = socket.socket()
+
+s.connect(("127.0.0.1", 12345))
+
+s.sendall(md5("hello").encode())
+
+print(s.recv(1024).decode())
+
+s.close()
+
+import socket, struct
+
+
+
+def left_rotate(x, c):
+
+    return ((x << c) | (x >> (32 - c))) & 0xFFFFFFFF
+
+
+
+def md5(message):
+
+    r = [7, 12, 17, 22] * 4 + [5, 9, 14, 20] * 4 + [4, 11, 16, 23] * 4 + [6, 10, 15, 21] * 4
+
+    k = [int(2**32 * abs(__import__("math").sin(i + 1))) & 0xFFFFFFFF for i in range(64)]
+
+    
+
+    msg = bytearray(message, 'utf-8')
+
+    orig_len = (8 * len(msg)) & 0xFFFFFFFFFFFFFFFF
+
+    msg.append(0x80)
+
+    while (len(msg) * 8) % 512 != 448:
+
+        msg.append(0)
+
+    msg += struct.pack('<Q', orig_len)
+
+
+
+    a, b, c, d = 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476
+
+    
+
+    for i in range(0, len(msg), 64):
+
+        chunk = msg[i:i + 64]
+
+        w = list(struct.unpack('<16I', chunk))
+
+        aa, bb, cc, dd = a, b, c, d
+
+        for j in range(64):
+
+            f, g = (b & c) | (~b & d), j if j < 16 else ((b & d) | (c & ~d), (5 * j + 1) % 16) if j < 32 else (b ^ c ^ d, (3 * j + 5) % 16) if j < 48 else (c ^ (b | ~d), (7 * j) % 16)
+
+            f = (f + a + k[j] + w[g]) & 0xFFFFFFFF
+
+            a, d, c, b = d, (b + left_rotate(f, r[j])) & 0xFFFFFFFF, b, c
+
+        a, b, c, d = (a + aa) & 0xFFFFFFFF, (b + bb) & 0xFFFFFFFF, (c + cc) & 0xFFFFFFFF, (d + dd) & 0xFFFFFFFF
+
+
+
+    return struct.pack('<4I', a, b, c, d).hex()
+
+
+
+server = socket.socket()
+
+server.bind(("0.0.0.0", 12345))
+
+server.listen(1)
+
+print("Server listening on port 12345...")
+
+
+
+while True:
+
+    conn, addr = server.accept()
+
+    data = conn.recv(1024).decode()
+
+    print(f"Received: {data}")
+
+    conn.sendall(md5(data).encode())
+
+    conn.close()
+
+
+
+---------------------------------------------------------------------------------
+
+SHA-1
+
+
+
+import socket
+
+import threading
+
+
+
+def left_rotate(n, b):
+
+    return ((n << b) | (n >> (32 - b))) & 0xffffffff
+
+
+
+def sha1(msg):
+
+    msg = bytearray(msg, 'utf-8')
+
+    ml = len(msg) * 8
+
+    msg.append(0x80)
+
+    while (len(msg) * 8) % 512 != 448:
+
+        msg.append(0)
+
+    msg += ml.to_bytes(8, 'big')
+
+
+
+    h0, h1, h2, h3, h4 = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+
+
+
+    for i in range(0, len(msg), 64):
+
+        w = list(int.from_bytes(msg[i + j:i + j + 4], 'big') for j in range(0, 64, 4))
+
+        for j in range(16, 80):
+
+            w.append(left_rotate(w[j-3] ^ w[j-8] ^ w[j-14] ^ w[j-16], 1))
+
+
+
+        a, b, c, d, e = h0, h1, h2, h3, h4
+
+
+
+        for j in range(80):
+
+            if j < 20: f, k = (b & c) | ((~b) & d), 0x5A827999
+
+            elif j < 40: f, k = b ^ c ^ d, 0x6ED9EBA1
+
+            elif j < 60: f, k = (b & c) | (b & d) | (c & d), 0x8F1BBCDC
+
+            else: f, k = b ^ c ^ d, 0xCA62C1D6
+
+            temp = (left_rotate(a, 5) + f + e + k + w[j]) & 0xffffffff
+
+            a, b, c, d, e = temp, a, left_rotate(b, 30), c, d
+
+
+
+        h0 = (h0 + a) & 0xffffffff
+
+        h1 = (h1 + b) & 0xffffffff
+
+        h2 = (h2 + c) & 0xffffffff
+
+        h3 = (h3 + d) & 0xffffffff
+
+        h4 = (h4 + e) & 0xffffffff
+
+
+
+    return ''.join(hex(i)[2:].zfill(8) for i in [h0, h1, h2, h3, h4])
+
+
+
+# ---------------- SERVER ---------------- #
+
+def start_server():
+
+    s = socket.socket()
+
+    s.bind(("0.0.0.0", 12345))
+
+    s.listen(1)
+
+    print("[SERVER] Listening on port 12345...")
+
+    while True:
+
+        conn, addr = s.accept()
+
+        data = conn.recv(1024).decode()
+
+        print("[SERVER] Received:", data)
+
+        digest = sha1(data)
+
+        conn.sendall(digest.encode())
+
+        conn.close()
+
+
+
+
+# ---------------- CLIENT ---------------- #
+
+def start_client(msg="hello"):
+
+    s = socket.socket()
+
+    s.connect(("127.0.0.1", 12345))
+
+    s.sendall(msg.encode())
+
+    print("[CLIENT] Sent:", msg)
+
+    print("[CLIENT] SHA1:", s.recv(1024).decode())
+
+    s.close()
+
+
+
+--------------------------------------------------------
+
+AES 
+
+
+
+import socket
+
+
+
+def pad(msg,b):
+
+    n=len(msg)
+
+    r=b-(n%b) if n%b else 0
+
+    return msg+chr(r)*r
+
+
+
+def unpad(msg):
+
+    r=ord(msg[-1])
+
+    return msg[:-r]
+
+
+
+def xor_block(msg,key):
+
+    return ''.join(chr(ord(m)^ord(k))for m,k in zip(msg,key))
+
+
+
+def encrypt(msg,key):
+
+    msg=pad(msg,len(key))
+
+    out=""
+
+    for i in range(0,len(msg),len(key)):
+
+        blk=msg[i:i+len(key)]
+
+        out+=xor_block(blk,key)
+
+    return out.encode().hex()
+
+
+
+def decrypt(cipher,key):
+
+    raw=bytes.fromhex(cipher).decode()
+
+    out=""
+
+    for i in range(0,len(raw),len(key)):
+
+        blk=raw[i:i+len(key)]
+
+        out+=xor_block(blk,key)
+
+    return unpad(out)
+def server():
+    k="simpleaeskey1234"
+    s=socket.socket()
+    s.bind(('localhost',9999))
+    s.listen(1)
+    c,_=s.accept()
+    mode,data=c.recv(2048).decode().split(":",1)
+    res=encrypt(data,k)if mode=="ENC"else decrypt(data,k)
+    c.send(res.encode())
+    c.close()
+server()
+import socket
+def client():
+    s=socket.socket()
+    s.connect(('localhost',9999))
+    mode=input("Mode (ENC/DEC): ").strip().upper()
+    text=input("Text: ").strip()
+    s.send(f"{mode}:{text}".encode())
+    print("Result:",s.recv(2048).decode())
+    s.close()
+client()
